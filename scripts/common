@@ -3,6 +3,15 @@ log (){
 }
 export -f log
 
+ensure_qemu() {
+	if [ -x /usr/bin/qemu-aarch64-static ] && [ ! -x "${ROOTFS_DIR}/usr/bin/qemu-aarch64-static" ]; then
+		log "[ensure_qemu] Copying qemu-aarch64-static into rootfs"
+		mkdir -p "${ROOTFS_DIR}/usr/bin"
+		cp /usr/bin/qemu-aarch64-static "${ROOTFS_DIR}/usr/bin/"
+	fi
+}
+export -f ensure_qemu
+
 bootstrap(){
 	local BOOTSTRAP_CMD=debootstrap
 	local BOOTSTRAP_ARGS=()
@@ -18,7 +27,22 @@ bootstrap(){
 	BOOTSTRAP_ARGS+=("$@")
 	printf -v BOOTSTRAP_STR '%q ' "${BOOTSTRAP_ARGS[@]}"
 
-	capsh $CAPSH_ARG -- -c "'${BOOTSTRAP_CMD}' $BOOTSTRAP_STR" || true
+	if [ -x /usr/bin/qemu-aarch64-static ]; then
+		# QEMU ortamında foreign stage yap
+		log "[bootstrap] QEMU detected → using --foreign"
+		${BOOTSTRAP_CMD} --foreign $BOOTSTRAP_STR || true
+
+		# QEMU binary’yi rootfs içine kopyala (ensure)
+		ROOTFS_DIR="$2"
+		ensure_qemu
+
+		# Rootfs içinde ikinci aşamayı çalıştır
+		on_chroot /debootstrap/debootstrap --second-stage
+	else
+		# Normal yol (binfmt_misc varsa)
+		log "[bootstrap] Running native debootstrap"
+		capsh $CAPSH_ARG -- -c "'${BOOTSTRAP_CMD}' $BOOTSTRAP_STR" || true
+	fi
 
 	if [ -d "$2/debootstrap" ] && ! rmdir "$2/debootstrap"; then
 		cp "$2/debootstrap/debootstrap.log" "${STAGE_WORK_DIR}"
@@ -101,7 +125,17 @@ on_chroot() {
 		mount -t tmpfs  tmpfs "${ROOTFS_DIR}/tmp"
 	fi
 
-	capsh $CAPSH_ARG "--chroot=${ROOTFS_DIR}/" -- -e "$@"
+	# QEMU binary’si rootfs içinde yoksa kopyala
+	ensure_qemu
+
+	# Eğer qemu varsa onunla çalıştır
+	if [ -x "${ROOTFS_DIR}/usr/bin/qemu-aarch64-static" ]; then
+		log "[on_chroot] Running under QEMU: $*"
+		chroot "${ROOTFS_DIR}" /usr/bin/qemu-aarch64-static /bin/bash -c "$*"
+	else
+		log "[on_chroot] Running natively with capsh: $*"
+		capsh $CAPSH_ARG "--chroot=${ROOTFS_DIR}/" -- -e "$@"
+	fi
 }
 export -f on_chroot
 
