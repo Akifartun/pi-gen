@@ -101,6 +101,13 @@ unmount_image(){
 export -f unmount_image
 
 on_chroot() {
+	mkdir -p "${ROOTFS_DIR}/proc" \
+         "${ROOTFS_DIR}/sys" \
+         "${ROOTFS_DIR}/dev/pts" \
+         "${ROOTFS_DIR}/dev" \
+         "${ROOTFS_DIR}/run" \
+         "${ROOTFS_DIR}/tmp"
+	
 	if ! mount | grep -q "$(realpath "${ROOTFS_DIR}"/proc)"; then
 		mount -t proc proc "${ROOTFS_DIR}/proc"
 	fi
